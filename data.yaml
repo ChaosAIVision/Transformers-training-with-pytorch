@@ -1,0 +1,7 @@
+train: /home/chaos/Documents/ChaosAIVision/dataset/train.csv
+# valid: /home/chaos/Documents/ChaosAIVision/dataset/yolo_train/valid/images
+# test: 
+# num_classes: 3
+# categories: ['person', 'cat', 'dog']
+pretrain_weight: /home/chaos/Documents/ChaosAIVision/yolo_output/yolov1.weights
+save_dirs: /home/chaos/Documents/ChaosAIVision/temp_folder
