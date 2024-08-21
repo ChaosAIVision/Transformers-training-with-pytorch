@@ -48,7 +48,7 @@ def train_fn(train_loader, model, optimizer, loss_fn, epoch, total_epochs, scale
         x, y = x.to(device), y.to(device)
         optimizer.zero_grad()
         with torch.cuda.amp.autocast():
-            out = model(x)
+            out = model(x, None)
             loss = loss_fn(out, y)
             mean_loss.append(loss.item())
 
@@ -85,7 +85,7 @@ def test_fn(test_loader, model, loss_fn, epoch, total_epochs, scaler = None):
                 continue
         x, y = x.to(device), y.to(device)
         with torch.cuda.amp.autocast():
-            out = model(x)
+            out = model(x, None)
             loss = loss_fn(out, y)
 
 
@@ -140,16 +140,21 @@ def train(args):
                             shuffle= False,
                             pin_memory= True,
                             drop_last= True)
-    vocab_size = 30522  # Kích thước từ vựng, ví dụ như kích thước từ vựng của DistilBERT
-    max_length = 128    # Độ dài tối đa của chuỗi đầu vào
-    embed_dim = 768     # Kích thước của các embedding vectors, ví dụ như kích thước embedding của DistilBERT
-    num_heads = 12      # Số lượng đầu của multi-head attention
-    ff_dim = 3072       # Kích thước của feed-forward network, tương tự như DistilBERT
-    dropout = 0.1       # Tỷ lệ dropout
+    # vocab_size = 30522  # Kích thước từ vựng, ví dụ như kích thước từ vựng của DistilBERT
+    # max_length = 128    # Độ dài tối đa của chuỗi đầu vào
+    # embed_dim = 768     # Kích thước của các embedding vectors, ví dụ như kích thước embedding của DistilBERT
+    # num_heads = 12      # Số lượng đầu của multi-head attention
+    # ff_dim = 3072       # Kích thước của feed-forward network, tương tự như DistilBERT
+    # dropout = 0.1       # Tỷ lệ dropout
 
     # Chọn thiết bị (CPU hoặc GPU)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
+    embed_dim = 32
+    num_heads = 2
+    ff_dim = 32
+    dropout = 0.1
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model = TransformerTextCls(vocab_size, max_length, embed_dim, num_heads, ff_dim, dropout, device)
     # Khởi tạo mô hình
     model = TransformerTextCls(
         vocab_size=vocab_size,
