@@ -4,8 +4,8 @@ from utils.dataset import TranslationDataset
 datasets = load_dataset(
     'csv', 
     data_files={
-        'train': '/Users/chaos/Documents/Chaos_working/Chaos_datasets/vietnam_english_dataset/train_dataset.csv',
-        'validation': '/Users/chaos/Documents/Chaos_working/Chaos_datasets/vietnam_english_dataset/validation_dataset.csv'
+        'train': '/home/chaos/Documents/ChaosAIVision/dataset/viet2eng/train_dataset.csv',
+        'validation': '/home/chaos/Documents/ChaosAIVision/dataset/viet2eng/validation_dataset.csv'
     }
 )
 

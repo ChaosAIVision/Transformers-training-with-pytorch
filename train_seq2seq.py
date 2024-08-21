@@ -15,7 +15,7 @@ import torchmetrics
 def get_args():
     parser = argparse.ArgumentParser(description="Train Transformer Seq2Seq from scratch")
     parser.add_argument('--data_yaml', "-d", type=str, help='Path to dataset', default='/path/to/your/data.yaml')
-    parser.add_argument('--batch_size', '-b', type=int, help='input batch_size', default=16)
+    parser.add_argument('--batch_size', '-b', type=int, help='input batch_size', default=2)
     parser.add_argument('--epochs', '-e', type=int, default=10)
     parser.add_argument('--learning_rate', '-l', type=float, default=2e-5)
     parser.add_argument('--resume', action='store_true', help='True if want to resume training')
@@ -52,17 +52,43 @@ def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_
 
     return decoder_input.squeeze(0)
 
-def run_validation(model, validation_loader, tokenizer_src, tokenizer_tgt, max_len, device, print_msg, global_step, writer, num_examples=2):
-    model.eval()
-    count = 0
+def train_fn(train_loader, model, optimizer, loss_fn, epoch, total_epochs, writer, device):
+    model.train()
+    progress_bar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{total_epochs}", leave=True, colour='green')
+    mean_loss = []
 
-    source_texts = []
-    expected = []
-    predicted = []
+    for batch_idx, batch in enumerate(progress_bar):
+        encoder_input = batch['input_ids'].to(device)
+        decoder_input = batch['decoder_input'].to(device)
+        encoder_mask = batch['attention_mask'].to(device)
+        decoder_mask = batch['decoder_mask'].to(device)
+
+        optimizer.zero_grad()
+        # Remove mixed precision support
+        encoder_output = model.encoder(encoder_input, encoder_mask)
+
+        decoder_output = model.decoder(decoder_input, encoder_output, encoder_mask, decoder_mask)
+
+        proj_output = model.projection(decoder_output)
+
+        label = batch['labels'].to(device)
+        loss = loss_fn(proj_output.view(-1, proj_output.size(-1)), label.view(-1))
+        loss.backward()
+        optimizer.step()
+
+        mean_loss.append(loss.item())
+        progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
+
+    avg_loss = sum(mean_loss) / len(mean_loss)
+    writer.add_scalar("Train Loss", avg_loss, epoch)
+    return avg_loss
+def val_fn(valid_loader, model, tokenizer_src, tokenizer_tgt, max_len, device, writer, epoch):
+    model.eval()
+    progress_bar = tqdm(valid_loader, desc=f"Validation Epoch {epoch + 1}", leave=True, colour='yellow')
+    source_texts, expected, predicted = [], [], []
 
     with torch.no_grad():
-        for batch in validation_loader:
-            count += 1
+        for batch_idx, batch in enumerate(progress_bar):
             encoder_input = batch["input_ids"].to(device)
             encoder_mask = batch["attention_mask"].to(device)
 
@@ -78,57 +104,45 @@ def run_validation(model, validation_loader, tokenizer_src, tokenizer_tgt, max_l
             expected.append(target_text)
             predicted.append(model_out_text)
 
-            print_msg('-' * 80)
-            print_msg(f"{f'SOURCE: ':>12}{source_text}")
-            print_msg(f"{f'TARGET: ':>12}{target_text}")
-            print_msg(f"{f'PREDICTED: ':>12}{model_out_text}")
+            progress_bar.set_postfix({'prediction': model_out_text})
 
-            if count == num_examples:
-                print_msg('-' * 80)
-                break
+    metric_cer = torchmetrics.CharErrorRate()
+    cer = metric_cer(predicted, expected)
+    writer.add_scalar('Validation CER', cer, epoch)
 
-    if writer:
-        metric = torchmetrics.CharErrorRate()
-        cer = metric(predicted, expected)
-        writer.add_scalar('validation cer', cer, global_step)
+    metric_wer = torchmetrics.WordErrorRate()
+    wer = metric_wer(predicted, expected)
+    writer.add_scalar('Validation WER', wer, epoch)
 
-        metric = torchmetrics.WordErrorRate()
-        wer = metric(predicted, expected)
-        writer.add_scalar('validation wer', wer, global_step)
+    metric_bleu = torchmetrics.BLEUScore()
+    bleu = metric_bleu(predicted, expected)
+    writer.add_scalar('Validation BLEU', bleu, epoch)
 
-        metric = torchmetrics.BLEUScore()
-        bleu = metric(predicted, expected)
-        writer.add_scalar('validation BLEU', bleu, global_step)
+    return cer, wer, bleu
 
-        writer.flush()
-
-def train_model(args):
+def train(args):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("Using device:", device)
 
-    # Load dataset
     datasets = load_dataset(
     'csv', 
     data_files={
-        'train': '/Users/chaos/Documents/Chaos_working/Chaos_datasets/vietnam_english_dataset/train_dataset.csv',
-        'validation': '/Users/chaos/Documents/Chaos_working/Chaos_datasets/vietnam_english_dataset/validation_dataset.csv'
+        'train': '/home/chaos/Documents/ChaosAIVision/dataset/viet2eng/train_dataset.csv',
+        'validation': '/home/chaos/Documents/ChaosAIVision/dataset/viet2eng/validation_dataset.csv'
     }
 )
 
     train_dataset = datasets['train']
     valid_dataset = datasets['validation']
 
-    # Initialize tokenizer
     tokenizer_src = AutoTokenizer.from_pretrained("bert-base-multilingual-cased")
     tokenizer_tgt = AutoTokenizer.from_pretrained("bert-base-multilingual-cased")
 
-    # Create Dataset and DataLoader
     train_data = TranslationDataset(train_dataset, tokenizer_src)
     valid_data = TranslationDataset(valid_dataset, tokenizer_tgt)
     train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
     valid_loader = DataLoader(valid_data, batch_size=1)
 
-    # Initialize model
     vocab_size = tokenizer_src.vocab_size
     max_length = tokenizer_src.model_max_length
     d_model = 768
@@ -146,45 +160,22 @@ def train_model(args):
         device=device
     ).to(device)
 
-    # Initialize optimizer and loss function
     loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_tgt.pad_token_id)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
-    scaler = torch.cuda.amp.GradScaler()
     writer = SummaryWriter(f'runs/{args.data_yaml}')
 
-    best_loss = float('inf')
-
     for epoch in range(args.epochs):
-        torch.cuda.empty_cache()
-        model.train()
-        batch_iterator = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{args.epochs}")
-        for batch in batch_iterator:
-            encoder_input = batch['input_ids'].to(device)
-            decoder_input = batch['input_ids'].to(device)
-            encoder_mask = batch['attention_mask'].to(device)
-            decoder_mask = causal_mask(decoder_input.size(1)).to(device)
+        train_loss = train_fn(train_loader, model, optimizer, loss_fn, epoch, args.epochs, writer, device)
+        cer, wer, bleu = val_fn(valid_loader, model, tokenizer_src, tokenizer_tgt, max_length, device, writer, epoch)
 
-            optimizer.zero_grad()
-            with torch.cuda.amp.autocast():
-                encoder_output = model.encoder(encoder_input, encoder_mask)
-                decoder_output = model.decoder(decoder_input, encoder_output, encoder_mask, decoder_mask)
-                proj_output = model.projection(decoder_output)
-
-                label = batch['labels'].to(device)
-                loss = loss_fn(proj_output.view(-1, vocab_size), label.view(-1))
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-
-            batch_iterator.set_postfix({"loss": f"{loss.item():.4f}"})
-            writer.add_scalar("Train Loss", loss.item(), epoch * len(train_loader) + batch_iterator.n)
-
-        run_validation(model, valid_loader, tokenizer_src, tokenizer_tgt, max_length, device, lambda msg: batch_iterator.write(msg), epoch, writer)
+        print(f"Epoch {epoch + 1}/{args.epochs} - Train Loss: {train_loss:.4f}, CER: {cer:.4f}, WER: {wer:.4f}, BLEU: {bleu:.4f}")
 
         model_filename = f"model_epoch_{epoch + 1}.pth"
         torch.save(model.state_dict(), model_filename)
 
+    writer.close()
+
 if __name__ == "__main__":
     args = get_args()
-    train_model(args)
+    train(args)

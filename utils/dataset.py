@@ -1,6 +1,11 @@
 import torch
 from torch.utils.data import Dataset
 
+
+def causal_mask(size):
+    mask = torch.triu(torch.ones((1, size, size)), diagonal=1).type(torch.int)
+    return mask == 0
+
 class Tweets_Dataset(Dataset):
     def __init__(self, data, max_len, vocab, tokenizer):
         self.data = data
@@ -32,7 +37,6 @@ class Tweets_Dataset(Dataset):
         #         'labels': label}
 
 
-
 class TranslationDataset(Dataset):
     def __init__(self, dataset, tokenizer, max_length=128):
         self.dataset = dataset
@@ -43,14 +47,9 @@ class TranslationDataset(Dataset):
         return len(self.dataset)
     
     def __getitem__(self, idx):
-        # Lấy câu song ngữ từ dataset
         example = self.dataset[idx]['text']
-        
-        # Tách câu thành tiếng Việt và tiếng Anh
         src_text, tgt_text = example.split('###>')
-        print(src_text)
-        
-        # Tokenize
+
         src_encoding = self.tokenizer(
             src_text,
             max_length=self.max_length,
@@ -66,16 +65,21 @@ class TranslationDataset(Dataset):
             truncation=True,
             return_tensors="pt"
         )
-        
-        # Flatten tensors to remove extra batch dimension
+
+        # Remove the batch dimension
         src_encoding = {key: val.squeeze(0) for key, val in src_encoding.items()}
         tgt_encoding = {key: val.squeeze(0) for key, val in tgt_encoding.items()}
-        
-        # Tạo input và label cho mô hình
-        labels = tgt_encoding['input_ids'].clone()  # Truy cập input_ids như một key trong dictionary
-        
+
+        labels = tgt_encoding['input_ids'].clone()
+
+        # Tạo mask cho encoder và decoder
+        encoder_mask = (src_encoding['input_ids'] != self.tokenizer.pad_token_id).unsqueeze(0).unsqueeze(0)  # (1, 1, seq_len)
+        decoder_mask = (tgt_encoding['input_ids'] != self.tokenizer.pad_token_id).unsqueeze(0).int() & causal_mask(tgt_encoding['input_ids'].size(0))  # (1, seq_len, seq_len)
+
         return {
             'input_ids': src_encoding['input_ids'],
-            'attention_mask': src_encoding['attention_mask'],
-            'labels': labels
+            'attention_mask': encoder_mask,  # Attention mask cho encoder
+            'decoder_input': tgt_encoding['input_ids'],  # Decoder input
+            'decoder_mask': decoder_mask,  # Attention mask cho decoder
+            'labels': labels  # Labels cho mô hình
         }
