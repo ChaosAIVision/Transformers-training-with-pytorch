@@ -31,3 +31,51 @@ class Tweets_Dataset(Dataset):
         # return {'input_ids': text_processed,
         #         'labels': label}
 
+
+
+class TranslationDataset(Dataset):
+    def __init__(self, dataset, tokenizer, max_length=128):
+        self.dataset = dataset
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+    
+    def __len__(self):
+        return len(self.dataset)
+    
+    def __getitem__(self, idx):
+        # Lấy câu song ngữ từ dataset
+        example = self.dataset[idx]['text']
+        
+        # Tách câu thành tiếng Việt và tiếng Anh
+        src_text, tgt_text = example.split('###>')
+        print(src_text)
+        
+        # Tokenize
+        src_encoding = self.tokenizer(
+            src_text,
+            max_length=self.max_length,
+            padding='max_length',
+            truncation=True,
+            return_tensors="pt"
+        )
+        
+        tgt_encoding = self.tokenizer(
+            tgt_text,
+            max_length=self.max_length,
+            padding='max_length',
+            truncation=True,
+            return_tensors="pt"
+        )
+        
+        # Flatten tensors to remove extra batch dimension
+        src_encoding = {key: val.squeeze(0) for key, val in src_encoding.items()}
+        tgt_encoding = {key: val.squeeze(0) for key, val in tgt_encoding.items()}
+        
+        # Tạo input và label cho mô hình
+        labels = tgt_encoding['input_ids'].clone()  # Truy cập input_ids như một key trong dictionary
+        
+        return {
+            'input_ids': src_encoding['input_ids'],
+            'attention_mask': src_encoding['attention_mask'],
+            'labels': labels
+        }

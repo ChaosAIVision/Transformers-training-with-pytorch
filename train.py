@@ -71,7 +71,8 @@ def train_fn(train_loader, model, optimizer, loss_fn, epoch, total_epochs, scale
 
 
 def test_fn(test_loader, model, loss_fn, epoch, total_epochs, scaler = None):
-    device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
+    device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+
     model.eval()
     running_correct = 0
     total = 0
